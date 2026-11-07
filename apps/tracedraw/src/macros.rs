@@ -1217,6 +1217,85 @@ mod tests {
     }
 
     #[test]
+    fn a_macro_finds_a_palette_spot_colour_by_name_and_fills_with_it() {
+        // The pattern of underlay macros: look up an ink by name in every
+        // open palette, fill with it and set the fill to overprint.
+        let code = "Function FindSpot(nm As String) As Color\r\n\
+            Dim pal As Palette, i As Long\r\n\
+            For Each pal In Application.Palettes\r\n\
+            For i = 1 To pal.ColorCount\r\n\
+            If StrComp(pal.Color(i).Name, nm, vbTextCompare) = 0 Then\r\n\
+            Set FindSpot = pal.Color(i)\r\n\
+            Exit Function\r\n\
+            End If\r\n\
+            Next i\r\n\
+            Next pal\r\n\
+            End Function\r\n\
+            Sub Go()\r\n\
+            Dim c As Color, s As Shape\r\n\
+            Set c = FindSpot(\"Spot_1_W\")\r\n\
+            If c Is Nothing Then Debug.Print \"missing\": Exit Sub\r\n\
+            Debug.Print \"found \" & c.Name & \" \" & c.IsSpot\r\n\
+            Set s = ActiveLayer.CreateRectangle2(10, 10, 40, 20)\r\n\
+            s.Fill.ApplyUniformFill c\r\n\
+            s.OverprintFill = True\r\n\
+            Debug.Print \"fill \" & s.Fill.UniformColor.Name\r\n\
+            End Sub\r\n";
+        let mut app = app_with(project("Spots", code, Vec::new()));
+        let white = crate::palette::spot_color(
+            "Spot_1_W",
+            tracedraw_core::Color::cmyk_pct(0.0, 0.0, 0.0, 20.0),
+        );
+        app.palettes.push(crate::palette::Palette {
+            name: "UV".into(),
+            key: "",
+            colors: vec![
+                ("Spot_1_W".into(), white),
+                (
+                    "Spot_2_L".into(),
+                    crate::palette::spot_color(
+                        "Spot_2_L",
+                        tracedraw_core::Color::cmyk_pct(50.0, 0.0, 0.0, 0.0),
+                    ),
+                ),
+            ],
+            builtin: false,
+            path: None,
+        });
+        app.run_macro(0, "Main", "Go");
+        drive(&mut app, |_| {});
+        assert!(app.macros.error.is_none(), "{:?}", app.macros.error);
+        assert!(
+            app.scripts_output
+                .iter()
+                .any(|l| l == "found Spot_1_W True"),
+            "{:?}",
+            app.scripts_output
+        );
+        assert!(
+            app.scripts_output.iter().any(|l| l == "fill Spot_1_W"),
+            "{:?}",
+            app.scripts_output
+        );
+        // The ink joined the drawing under its palette name, and the
+        // rectangle is filled with it and overprints.
+        let tracedraw_core::Color::Spot { ink, .. } = white else {
+            panic!("not a spot colour");
+        };
+        assert_eq!(
+            app.doc().ink(ink).map(|i| i.name.as_str()),
+            Some("Spot_1_W")
+        );
+        let filled = app
+            .doc()
+            .all_layers()
+            .flat_map(|l| l.shapes.iter())
+            .find(|s| matches!(s.fill, tracedraw_core::Fill::Solid(c) if c == white))
+            .expect("a shape filled with the ink");
+        assert!(filled.overprint_fill);
+    }
+
+    #[test]
     fn a_form_button_draws_and_reads_its_text_box() {
         let mut form = vp::Form {
             name: "Box".into(),

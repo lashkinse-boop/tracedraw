@@ -1682,3 +1682,49 @@ Layer.prototype.PasteSpecial = function () { return __no('Layer.PasteSpecial', '
 __def(Fill, 'Pattern', function () { return { get Type() { return __no('Fill.Pattern'); } }; });
 __def(Shape, 'StartShape', function () { return __no('Shape.StartShape', 'connectors are not objects of their own'); });
 __Bitmap.prototype.GetPixelColor = function () { return __no('Bitmap.GetPixelColor'); };
+
+// ----- Palettes -----------------------------------------------------------
+// Application.Palettes: the palettes the app has open, each a 1-based list
+// of named colours; Document.Palette: the drawing's own palette. A spot
+// colour's Name is its ink's name, so macros find inks by name.
+
+class Palette {
+  constructor(p) { this._p = p; }
+  get Name() { return this._p.name; }
+  get ColorCount() { return this._p.colors.length; }
+  Color(Index) {
+    const e = this._p.colors[Index - 1];
+    if (!e) throw new Error('The index is out of range: ' + Index);
+    const c = new Color(JSON.parse(JSON.stringify(e.color)));
+    c._name = e.name;
+    return c;
+  }
+  get Colors() {
+    const n = this._p.colors.length;
+    return { Count: n, Item: (i) => this.Color(i),
+      [Symbol.iterator]: () => __iter(Array.from({ length: n }, (_, i) => this.Color(i + 1))) };
+  }
+  FindColor(Name) {
+    const i = this._p.colors.findIndex(e => e.name.toLowerCase() === String(Name).toLowerCase());
+    return i < 0 ? null : this.Color(i + 1);
+  }
+}
+class __Palettes {
+  constructor() { this._list = __call('vg_palettes', {}).palettes; }
+  get Count() { return this._list.length; }
+  Item(IndexOrName) {
+    const p = typeof IndexOrName === 'number' ? this._list[IndexOrName - 1]
+      : this._list.find(q => q.name.toLowerCase() === String(IndexOrName).toLowerCase());
+    if (!p) throw new Error('No palette ' + IndexOrName);
+    return new Palette(p);
+  }
+  [Symbol.iterator]() { return __iter(this._list.map(p => new Palette(p))); }
+}
+Object.defineProperty(Application, 'Palettes', { get() { return new __Palettes(); }, configurable: true });
+Object.defineProperty(globalThis, 'Palettes', { get() { return new __Palettes(); }, configurable: true });
+__def(Document, 'Palette', function () { return new Palette(__call('vg_doc_palette', {})); });
+__def(Color, 'Name', function () {
+  if (this._name) return this._name;
+  if (this.v.model === 'spot') return __call('vg_ink_name', { ink: this.v.ink }).name;
+  return '';
+});

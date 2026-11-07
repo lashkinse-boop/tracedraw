@@ -29,6 +29,9 @@ pub(super) struct AppView {
     pub nodes: Vec<(u64, usize)>,
     /// The colour profiles in use: RGB, CMYK, grayscale.
     pub profiles: [String; 3],
+    /// The app's open palettes (`Application.Palettes`): each name with
+    /// its named colours.
+    pub palettes: Vec<(String, Vec<(String, Color)>)>,
 }
 
 impl AppView {
@@ -49,8 +52,24 @@ impl AppView {
                 doc_cmyk.unwrap_or_else(|| p.cmyk_profile.clone()),
                 p.gray_profile.clone(),
             ],
+            palettes: app
+                .palettes
+                .iter()
+                .map(|p| (p.display_name(), p.colors.clone()))
+                .collect(),
         }
     }
+}
+
+/// A palette for macros: its name and its colours, each with its name.
+fn palette_json(name: &str, colors: &[(String, Color)]) -> Value {
+    json!({
+        "name": name,
+        "colors": colors
+            .iter()
+            .map(|(n, c)| json!({"name": n, "color": c}))
+            .collect::<Vec<_>>(),
+    })
 }
 
 fn ids(a: &Value, key: &str) -> Vec<ShapeId> {
@@ -76,6 +95,53 @@ fn kind_tag(k: &ShapeKind) -> &'static str {
 }
 
 impl HostInner {
+    /// The name of a spot colour's ink: the drawing's ink list first, then
+    /// a spot colour of that ink in an open palette. `None` for colours
+    /// that are not spot colours, or an ink nobody names.
+    fn ink_name(&self, c: Color) -> Option<String> {
+        let Color::Spot { ink, .. } = c else {
+            return None;
+        };
+        if let Some(i) = self.doc.ink(ink) {
+            return Some(i.name.clone());
+        }
+        self.view
+            .palettes
+            .iter()
+            .flat_map(|(_, colors)| colors)
+            .find(|(_, pc)| matches!(pc, Color::Spot { ink: i, .. } if *i == ink))
+            .map(|(n, _)| n.clone())
+    }
+
+    /// A spot colour a macro applies whose ink the drawing does not have
+    /// yet: the ink joins the drawing's list under its palette name, so
+    /// exports print it on a plate of its own.
+    fn add_ink_for(&mut self, c: Color) -> Result<(), String> {
+        let Color::Spot {
+            ink,
+            c: cc,
+            m,
+            y,
+            k,
+            ..
+        } = c
+        else {
+            return Ok(());
+        };
+        if self.doc.ink(ink).is_some() {
+            return Ok(());
+        }
+        let name = self
+            .ink_name(c)
+            .unwrap_or_else(|| format!("Spot {ink:08x}"));
+        let mut inks = self.doc.inks.clone();
+        inks.push(tracedraw_core::document::Ink {
+            id: ink,
+            name,
+            cmyk: [cc, m, y, k],
+        });
+        self.run(Command::SetInks { inks })
+    }
     /// The top-level layer holding `id` (nested objects: their outermost
     /// group's layer).
     pub(super) fn layer_of(&self, id: ShapeId) -> Result<LayerId, String> {
@@ -304,6 +370,9 @@ impl HostInner {
                         .map_err(|e| format!("not a fill: {e}"))?;
                 let shapes = ids(a, "ids");
                 if !shapes.is_empty() {
+                    if let Fill::Solid(c) = &fill {
+                        self.add_ink_for(*c)?;
+                    }
                     self.run(Command::SetFill { shapes, fill })?;
                 }
                 json!({})
@@ -714,6 +783,35 @@ impl HostInner {
                 let path = s.page_path();
                 let len: f64 = path.segments().map(|seg| seg.arclen(1e-4)).sum();
                 json!({"length": len})
+            }
+            "vg_palettes" => json!({
+                "palettes": self
+                    .view
+                    .palettes
+                    .iter()
+                    .map(|(name, colors)| palette_json(name, colors))
+                    .collect::<Vec<_>>(),
+            }),
+            "vg_doc_palette" => {
+                let colors: Vec<(String, Color)> = self
+                    .doc
+                    .palette
+                    .iter()
+                    .map(|c| (self.ink_name(*c).unwrap_or_default(), *c))
+                    .collect();
+                palette_json(&self.doc.title, &colors)
+            }
+            "vg_ink_name" => {
+                let ink = a.get("ink").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let c = Color::Spot {
+                    ink,
+                    tint: 1.0,
+                    c: 0.0,
+                    m: 0.0,
+                    y: 0.0,
+                    k: 0.0,
+                };
+                json!({"name": self.ink_name(c).unwrap_or_default()})
             }
             "vg_color" => {
                 let c: Color = a

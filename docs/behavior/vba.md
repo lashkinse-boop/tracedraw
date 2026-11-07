@@ -224,7 +224,19 @@ Creatable with `New`.
   `cdrColorRegistration`), `RGBRed`, `RGBGreen`, `RGBBlue`, `RGBValue`,
   `CMYKCyan`, `CMYKMagenta`, `CMYKYellow`, `CMYKBlack` (all read and
   write), `Gray`, `HSBHue`, `HSBSaturation`, `HSBBrightness`,
-  `HexValue`, `Name`, `IsSpot`, `IsCMYK`, `IsSame`.
+  `HexValue`, `Name` (a spot colour's ink name; a palette colour's
+  name), `IsSpot`, `IsCMYK`, `IsSame`.
+
+### Palettes
+
+- **`Application.Palettes`** (also a global): the palettes the app has
+  open, 1-based, by index or name, `Count`, `For Each`.
+- **`Document.Palette`**: the drawing's own palette.
+- **`Palette`:** `Name`, `ColorCount`, `Color(Index)` (1-based, the
+  colour with its name), `Colors`, `FindColor(Name)`.
+- A spot colour a macro applies (`ApplyUniformFill`) whose ink the
+  drawing does not have yet joins the drawing's ink list under its
+  palette name, so exports print it on a plate of its own.
 
 ### Constants
 
