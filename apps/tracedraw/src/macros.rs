@@ -1296,6 +1296,123 @@ mod tests {
     }
 
     #[test]
+    fn an_underlay_macro_builds_offset_spot_underlays_that_overprint() {
+        // The steps of a print underlay macro: inks found by name in the
+        // open palettes, a silhouette of the selection, then for each ink
+        // a copy contoured outside or inside, separated, filled with the
+        // ink and set to overprint.
+        let code = "Function FindSpot(nm As String) As Color\r\n\
+            Dim pal As Palette, i As Long\r\n\
+            On Error Resume Next\r\n\
+            For Each pal In Application.Palettes\r\n\
+            For i = 1 To pal.ColorCount\r\n\
+            If StrComp(pal.Color(i).Name, nm, vbTextCompare) = 0 Then\r\n\
+            Set FindSpot = pal.Color(i)\r\n\
+            Exit Function\r\n\
+            End If\r\n\
+            Next i\r\n\
+            Next pal\r\n\
+            End Function\r\n\
+            Function Offset(src As Shape, mm As Double) As Shape\r\n\
+            Dim d As Shape, eff As Effect, sep As ShapeRange, res As New ShapeRange, i As Long\r\n\
+            Set d = src.Duplicate\r\n\
+            If Abs(mm) < 0.001 Then Set Offset = d: Exit Function\r\n\
+            If mm > 0 Then\r\n\
+            Set eff = d.CreateContour(cdrContourOutside, mm, 1)\r\n\
+            Else\r\n\
+            Set eff = d.CreateContour(cdrContourInside, -mm, 1)\r\n\
+            End If\r\n\
+            Set sep = eff.Separate\r\n\
+            For i = 1 To sep.Count\r\n\
+            If sep(i).StaticID <> d.StaticID Then res.Add sep(i)\r\n\
+            Next i\r\n\
+            d.Delete\r\n\
+            Set Offset = res(1)\r\n\
+            End Function\r\n\
+            Sub Underlay(sil As Shape, mm As Double, c As Color, nm As String)\r\n\
+            Dim u As Shape\r\n\
+            Set u = Offset(sil, mm)\r\n\
+            u.Fill.ApplyUniformFill c\r\n\
+            u.Outline.SetNoOutline\r\n\
+            u.OverprintFill = True\r\n\
+            u.Name = nm\r\n\
+            End Sub\r\n\
+            Sub Go()\r\n\
+            ActiveDocument.Unit = cdrMillimeter\r\n\
+            Dim art As Shape, sil As Shape\r\n\
+            Set art = ActiveLayer.CreateRectangle2(10, 10, 40, 20)\r\n\
+            art.Fill.UniformColor.CMYKAssign 0, 100, 100, 0\r\n\
+            Set sil = art.Duplicate\r\n\
+            Underlay sil, -0.1, FindSpot(\"Spot_1_W\"), \"UNDERLAY_W\"\r\n\
+            Underlay sil, 0.2, FindSpot(\"Spot_2_L\"), \"UNDERLAY_L\"\r\n\
+            Underlay sil, 0, FindSpot(\"Spot_3_K\"), \"UNDERLAY_K\"\r\n\
+            sil.Delete\r\n\
+            Debug.Print \"done \" & ActiveLayer.Shapes.Count\r\n\
+            End Sub\r\n";
+        let mut app = app_with(project("Underlay", code, Vec::new()));
+        let ink = |n: &str, k: f32| {
+            crate::palette::spot_color(n, tracedraw_core::Color::cmyk_pct(0.0, 0.0, 0.0, k))
+        };
+        let (w, l, k) = (
+            ink("Spot_1_W", 10.0),
+            ink("Spot_2_L", 20.0),
+            ink("Spot_3_K", 30.0),
+        );
+        app.palettes.push(crate::palette::Palette {
+            name: "UV".into(),
+            key: "",
+            colors: vec![
+                ("Spot_1_W".into(), w),
+                ("Spot_2_L".into(), l),
+                ("Spot_3_K".into(), k),
+            ],
+            builtin: false,
+            path: None,
+        });
+        app.run_macro(0, "Main", "Go");
+        drive(&mut app, |_| {});
+        assert!(app.macros.error.is_none(), "{:?}", app.macros.error);
+        assert!(
+            app.scripts_output.iter().any(|x| x == "done 4"),
+            "{:?}",
+            app.scripts_output
+        );
+        let shapes: Vec<tracedraw_core::document::Shape> = app
+            .doc()
+            .all_layers()
+            .flat_map(|x| x.shapes.iter().cloned())
+            .collect();
+        let get = |n: &str| {
+            shapes
+                .iter()
+                .find(|s| s.name.as_deref() == Some(n))
+                .unwrap_or_else(|| panic!("{n}"))
+                .clone()
+        };
+        let art = shapes.iter().find(|s| s.name.is_none()).expect("artwork");
+        let ab = app.doc().shape_on_page(art.id).expect("art").bounds();
+        for (n, c, grow) in [
+            ("UNDERLAY_W", w, -0.1),
+            ("UNDERLAY_L", l, 0.2),
+            ("UNDERLAY_K", k, 0.0),
+        ] {
+            let u = get(n);
+            assert_eq!(u.fill, tracedraw_core::Fill::Solid(c), "{n}");
+            assert!(u.overprint_fill, "{n}");
+            let b = app.doc().shape_on_page(u.id).expect("underlay").bounds();
+            assert!(
+                (b.width() - (ab.width() + 2.0 * grow)).abs() < 0.01
+                    && (b.height() - (ab.height() + 2.0 * grow)).abs() < 0.01,
+                "{n}: {b:?} {ab:?}"
+            );
+        }
+        // Each ink joined the drawing, so a PDF prints it on its own plate.
+        for name in ["Spot_1_W", "Spot_2_L", "Spot_3_K"] {
+            assert!(app.doc().inks.iter().any(|i| i.name == name), "{name}");
+        }
+    }
+
+    #[test]
     fn a_form_button_draws_and_reads_its_text_box() {
         let mut form = vp::Form {
             name: "Box".into(),

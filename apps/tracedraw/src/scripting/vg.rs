@@ -1345,6 +1345,94 @@ impl HostInner {
                 }
                 json!({"effects": list})
             }
+            "vg_add_contour" => {
+                // Shape.CreateContour: a contour effect of `steps` rings
+                // `offset` mm apart, outside, inside or to the centre,
+                // stepping from the object's fill colour to `fill`.
+                let id = ShapeId(id_arg(a, "id")?);
+                let s = self.shape(id.raw())?;
+                let direction = num(a, "direction", 2.0) as i64;
+                let offset = num(a, "offset", 1.0).abs();
+                if offset <= 0.0 {
+                    return Err("the contour offset must be more than 0".into());
+                }
+                let fill_to = a
+                    .get("fill")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .or(match s.fill {
+                        Fill::Solid(c) => Some(c),
+                        _ => None,
+                    })
+                    .unwrap_or(Color::WHITE);
+                let mut effects = s.effects.clone();
+                effects.push(tracedraw_core::live::Effect::Contour {
+                    steps: (num(a, "steps", 1.0).max(1.0) as u32).min(999),
+                    offset,
+                    outside: direction == 2,
+                    to_center: direction == 0,
+                    fill_to,
+                    outline_to: None,
+                    color_blend: 0,
+                    corners: Some(tracedraw_core::shaping::Join::Miter),
+                    accel_objects: 0.0,
+                    accel_colors: 0.0,
+                });
+                let index = effects.len() - 1;
+                self.run(Command::SetEffects { shape: id, effects })?;
+                json!({"index": index})
+            }
+            "vg_outline_to_object" => {
+                // Outline.ConvertToObject: a filled curve of the outline's
+                // shape and colour, right above the object; the object
+                // loses its outline.
+                let id = ShapeId(id_arg(a, "id")?);
+                let layer = self.layer_of(id)?;
+                let s = self.doc.shape_on_page(id).ok_or("no shape")?;
+                let Some(st) = s.stroke.clone() else {
+                    return Err("the object has no outline".into());
+                };
+                let path =
+                    crate::tools2::outline_object_path(&s).ok_or("the outline draws nothing")?;
+                let oid = self.new_id();
+                let mut o = Shape::new(oid, ShapeKind::Path { path, closed: true });
+                o.fill = Fill::Solid(st.color);
+                o.stroke = None;
+                o.overprint_fill = s.overprint_outline;
+                self.run(Command::AddShape { layer, shape: o })?;
+                self.run(Command::OrderRelative {
+                    shapes: vec![oid],
+                    reference: id,
+                    in_front: true,
+                })?;
+                self.run(Command::SetStroke {
+                    shapes: vec![id],
+                    stroke: None,
+                })?;
+                json!({"id": oid.raw()})
+            }
+            "vg_copy_to_layer" => {
+                // ShapeRange.CopyToLayer: copies on the given layer, where
+                // the objects are on their page.
+                let layer = LayerId(
+                    a.get("layer")
+                        .and_then(|v| v.as_u64())
+                        .ok_or("missing layer")?,
+                );
+                if self.doc.layer(layer).is_err() {
+                    return Err("no such layer".into());
+                }
+                let mut out = Vec::new();
+                for id in ids(a, "ids") {
+                    let Some(s) = self.doc.shape_on_page(id) else {
+                        continue;
+                    };
+                    let copy = self.fresh_ids(s);
+                    out.push(copy.id.raw());
+                    self.run(Command::AddShape { layer, shape: copy })?;
+                }
+                json!({"ids": out})
+            }
             "vg_separate" => {
                 // The object and its effects become plain objects, as
                 // Flatten Effects makes them; a drop shadow becomes a
@@ -1391,11 +1479,12 @@ impl HostInner {
                 });
                 self.run(Command::DeleteShapes { shapes: vec![id] })?;
                 for p in parts {
-                    let p = self.fresh_ids(p);
+                    // The object itself keeps its id, as macros tell it
+                    // from the pieces its effects leave by its StaticID.
+                    let p = if p.id == id { p } else { self.fresh_ids(p) };
                     fresh.push(p.id.raw());
                     self.run(Command::AddShape { layer, shape: p })?;
                 }
-                self.selection.retain(|x| *x != id);
                 json!({"ids": fresh})
             }
             _ => return Ok(None),

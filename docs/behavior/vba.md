@@ -238,6 +238,20 @@ Creatable with `New`.
   drawing does not have yet joins the drawing's ink list under its
   palette name, so exports print it on a plate of its own.
 
+### Contours, outlines as objects, copies on a layer
+
+- **`Shape.CreateContour(Direction, Offset, Steps, ..., FillColor)`:**
+  a contour effect (`cdrContourToCenter` 0, `cdrContourInside` 1,
+  `cdrContourOutside` 2; `Offset` in the document unit, mitred corners),
+  stepping from the object's fill to `FillColor`. It gives back the
+  effect, whose `Separate` turns it into plain objects; the object keeps
+  its `StaticID`, so a macro tells it from the rings.
+- **`Outline.ConvertToObject`:** a filled curve of the outline's shape
+  and colour right above the object, which loses its outline (the same
+  geometry as Object > Convert Outline to Object).
+- **`CopyToLayer(Layer)`** on a shape, range or selection: copies on that
+  layer, in the same place on the page.
+
 ### Constants
 
 The enumerations macros use are globals with their numeric values.

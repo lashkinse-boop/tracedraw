@@ -1728,3 +1728,31 @@ __def(Color, 'Name', function () {
   if (this.v.model === 'spot') return __call('vg_ink_name', { ink: this.v.ink }).name;
   return '';
 });
+
+// ----- Contours, outlines as objects, copies on another layer --------------
+// cdrContourDirection, as the published reference numbers it.
+const cdrContourToCenter = 0, cdrContourInside = 1, cdrContourOutside = 2;
+globalThis.cdrContourToCenter = cdrContourToCenter;
+globalThis.cdrContourInside = cdrContourInside;
+globalThis.cdrContourOutside = cdrContourOutside;
+// Shape.CreateContour(Direction, Offset, Steps, BlendType, OutlineColor,
+// FillColor, ...): a contour effect on the object; the effect it gives
+// back separates into plain objects.
+Shape.prototype.CreateContour = function (Direction, Offset, Steps, BlendType, OutlineColor, FillColor) {
+  const args = { id: this.id, direction: Direction === undefined ? cdrContourOutside : Direction,
+    offset: __mm(Offset === undefined ? 1 : Offset), steps: Steps === undefined ? 1 : Steps };
+  if (FillColor && FillColor.v) args.fill = FillColor.v;
+  const r = __call('vg_add_contour', args);
+  return new __Effect(this.id, { kind: 'contour', index: r.index });
+};
+Outline.prototype.ConvertToObject = function () {
+  const ids = this.o._ids();
+  let last = null;
+  for (const id of ids) last = new Shape(__call('vg_outline_to_object', { id: id }).id);
+  return last;
+};
+for (const cls of [Shape, ShapeRange, SelectionShape]) {
+  cls.prototype.CopyToLayer = function (Layer) {
+    return new ShapeRange(__call('vg_copy_to_layer', { ids: this._ids(), layer: Layer.id }).ids);
+  };
+}

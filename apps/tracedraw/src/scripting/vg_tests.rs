@@ -725,3 +725,71 @@ fn align_and_distribute_take_the_reference_methods() {
     assert_eq!(out[3], "150 150");
     assert_eq!(out[4], "true");
 }
+
+#[test]
+fn contours_separate_into_offset_copies_and_the_object_keeps_its_id() {
+    // How underlay macros offset a silhouette: a copy, a one-step contour
+    // outside or inside, separated, the ring kept and the copy deleted.
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "ActiveDocument.Unit = cdrMillimeter;
+         const r = ActiveLayer.CreateRectangle2(10, 10, 20, 10);
+         r.Fill.UniformColor.CMYKAssign(0, 100, 100, 0);
+         function offset(mm, name) {
+           const d = r.Duplicate();
+           const eff = mm > 0 ? d.CreateContour(cdrContourOutside, mm, 1)
+                              : d.CreateContour(cdrContourInside, -mm, 1);
+           const sep = eff.Separate();
+           let ring = null;
+           for (const s of sep) if (s.StaticID !== d.StaticID) ring = s;
+           d.Delete();
+           ring.Name = name;
+           return ring;
+         }
+         offset(0.2, 'out');
+         offset(-0.1, 'in');
+         print(ActiveLayer.Shapes.Count);",
+    );
+    assert_eq!(out, vec!["3".to_string()]);
+    let find = |n: &str| {
+        all(&app)
+            .into_iter()
+            .find(|s| s.name.as_deref() == Some(n))
+            .expect(n)
+    };
+    let base = all(&app)
+        .into_iter()
+        .find(|s| s.name.is_none())
+        .expect("the rectangle");
+    let b = page_bounds(&app, base.id);
+    let o = page_bounds(&app, find("out").id);
+    let i = page_bounds(&app, find("in").id);
+    let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+    assert!(
+        near(o.width(), b.width() + 0.4) && near(o.height(), b.height() + 0.4),
+        "{o:?} {b:?}"
+    );
+    assert!(
+        near(i.width(), b.width() - 0.2) && near(i.height(), b.height() - 0.2),
+        "{i:?} {b:?}"
+    );
+    assert!(near(o.center().x, b.center().x) && near(i.center().y, b.center().y));
+}
+
+#[test]
+fn outlines_become_objects_and_shapes_copy_to_another_layer() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "ActiveDocument.Unit = cdrMillimeter;
+         const r = ActiveLayer.CreateRectangle2(10, 10, 20, 10);
+         r.Outline.Width = 1;
+         const o = r.Outline.ConvertToObject();
+         print(r.Outline.Type === cdrNoOutline, o.Fill.Type === cdrUniformFill);
+         const l = ActivePage.CreateLayer('Copies');
+         const c = ActiveLayer.Shapes.All().CopyToLayer(l);
+         print(c.Count, l.Shapes.Count);",
+    );
+    assert_eq!(out, vec!["true true".to_string(), "2 2".to_string()]);
+}
