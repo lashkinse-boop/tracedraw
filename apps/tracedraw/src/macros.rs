@@ -715,6 +715,9 @@ impl App {
         if let Some(s) = c.status {
             self.status = s;
         }
+        if let Some(on) = c.simulate_overprints {
+            self.simulate_overprints = on;
+        }
     }
 
     /// Answer the message or input box the macro waits for.
@@ -1410,6 +1413,65 @@ mod tests {
         for name in ["Spot_1_W", "Spot_2_L", "Spot_3_K"] {
             assert!(app.doc().inks.iter().any(|i| i.name == name), "{name}");
         }
+    }
+
+    #[test]
+    fn artistic_text_takes_its_font_and_size_by_name() {
+        // A label written with named arguments, as layout macros do.
+        let code = "Sub Go()\r\n\
+            Dim t As Shape, pg As Page\r\n\
+            Set pg = ActivePage\r\n\
+            Set t = pg.ActiveLayer.CreateArtisticText(pg.LeftX, pg.BottomY, \"label\", Font:=\"Arial\", Size:=10)\r\n\
+            t.Fill.UniformColor.CMYKAssign 0, 0, 0, 100\r\n\
+            Debug.Print \"made \" & t.Text.Story.Text & \" \" & t.Text.Story.Size\r\n\
+            End Sub\r\n";
+        let mut app = app_with(project("Label", code, Vec::new()));
+        app.run_macro(0, "Main", "Go");
+        drive(&mut app, |_| {});
+        assert!(app.macros.error.is_none(), "{:?}", app.macros.error);
+        assert!(
+            app.scripts_output.iter().any(|l| l == "made label 10"),
+            "{:?}",
+            app.scripts_output
+        );
+    }
+
+    #[test]
+    fn a_macro_turns_on_simulated_overprints_and_grouping_keeps_overprint() {
+        let code = "Sub Go()\r\n\
+            Dim a As Shape, b As Shape, sr As New ShapeRange, g As Shape\r\n\
+            Set a = ActiveLayer.CreateRectangle2(10, 10, 40, 20)\r\n\
+            Set b = ActiveLayer.CreateRectangle2(12, 12, 36, 16)\r\n\
+            b.OverprintFill = True\r\n\
+            sr.Add a: sr.Add b\r\n\
+            Set g = sr.Group\r\n\
+            g.Name = \"UVDTF\"\r\n\
+            On Error Resume Next\r\n\
+            ActiveWindow.ActiveView.Type = cdrEnhancedViewWithOverprints\r\n\
+            Debug.Print \"view \" & (ActiveWindow.ActiveView.Type = cdrEnhancedViewWithOverprints) & \" \" & Err.Number\r\n\
+            End Sub\r\n";
+        let mut app = app_with(project("View", code, Vec::new()));
+        assert!(!app.simulate_overprints);
+        app.run_macro(0, "Main", "Go");
+        drive(&mut app, |_| {});
+        assert!(app.macros.error.is_none(), "{:?}", app.macros.error);
+        assert!(
+            app.scripts_output.iter().any(|l| l == "view True 0"),
+            "{:?}",
+            app.scripts_output
+        );
+        assert!(app.simulate_overprints);
+        let group = app
+            .doc()
+            .all_layers()
+            .flat_map(|l| l.shapes.iter())
+            .find(|s| s.name.as_deref() == Some("UVDTF"))
+            .expect("the group")
+            .clone();
+        let tracedraw_core::document::ShapeKind::Group { children } = &group.kind else {
+            panic!("not a group");
+        };
+        assert_eq!(children.iter().filter(|c| c.overprint_fill).count(), 1);
     }
 
     #[test]

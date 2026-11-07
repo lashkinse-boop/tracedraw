@@ -43,6 +43,8 @@ pub struct Changes {
     pub output: Vec<String>,
     /// The status line it left (`Application.Status`).
     pub status: Option<String>,
+    /// View > Simulate Overprints as it set it (`ActiveView.Type`).
+    pub simulate_overprints: Option<bool>,
 }
 
 /// What the macro asks the app for.
@@ -237,6 +239,7 @@ fn take_changes(ctx: &mut Context, all: bool) -> Changes {
         page: Some(h.page),
         output: std::mem::take(&mut h.output),
         status: h.status.take(),
+        simulate_overprints: h.simulate_overprints.take(),
     }
 }
 
@@ -695,7 +698,7 @@ fn run_thread(
         let _ = js_string!("");
         for (what, src) in [
             ("common", COMMON),
-            ("object model", vg::PRELUDE),
+            ("object model", vg::prelude()),
             ("VBA runtime", tracedraw_vba::RUNTIME_JS),
             ("forms", GLUE),
         ] {

@@ -134,7 +134,7 @@ const __consts = {
   cdrLensTintedGrayscale: 8, cdrLensTransparency: 9, cdrLensWireframe: 10,
   // cdrViewType
   cdrSimpleWireframeView: 0, cdrWireframeView: 1, cdrDraftView: 2, cdrNormalView: 3,
-  cdrEnhancedView: 4, cdrPixelView: 6,
+  cdrEnhancedView: 4, cdrEnhancedViewWithOverprints: 5, cdrPixelView: 6,
   // cdrAntiAliasingType
   cdrNoAntiAliasing: 0, cdrNormalAntiAliasing: 1, cdrSupersampling: 2,
   // cdrTextLanguage (Windows language ids)
@@ -1343,8 +1343,10 @@ class __View {
   get OriginY() { return __un(__call('vg_doc', {}).view[1]); }
   get Zoom() { return 100; }
   set Zoom(v) { }
-  get Type() { return cdrEnhancedView; }
-  set Type(v) { }
+  // The view type: overprints are simulated in the enhanced view with
+  // overprints, as View > Simulate Overprints shows them.
+  get Type() { return __call('vg_doc', {}).simulate_overprints ? cdrEnhancedViewWithOverprints : cdrEnhancedView; }
+  set Type(v) { __call('vg_view', { simulate_overprints: v === cdrEnhancedViewWithOverprints }); }
   SetViewPoint() { }
   SetViewArea() { }
   ToFitPage() { }

@@ -32,6 +32,8 @@ pub(super) struct AppView {
     /// The app's open palettes (`Application.Palettes`): each name with
     /// its named colours.
     pub palettes: Vec<(String, Vec<(String, Color)>)>,
+    /// View > Simulate Overprints is on.
+    pub simulate_overprints: bool,
 }
 
 impl AppView {
@@ -57,6 +59,7 @@ impl AppView {
                 .iter()
                 .map(|p| (p.display_name(), p.colors.clone()))
                 .collect(),
+            simulate_overprints: app.simulate_overprints,
         }
     }
 }
@@ -321,6 +324,7 @@ impl HostInner {
                 "view": [self.view.center.0, self.view.center.1],
                 "profiles": self.view.profiles,
                 "master": self.doc.master.iter().map(|l| l.id.raw()).collect::<Vec<_>>(),
+                "simulate_overprints": self.view.simulate_overprints,
             }),
             "vg_info" => self.info(ShapeId(id_arg(a, "id")?))?,
             "vg_default_stroke" => {
@@ -984,6 +988,15 @@ impl HostInner {
                 })?;
                 json!({})
             }
+            "vg_view" => {
+                // ActiveView.Type: the enhanced view with overprints turns
+                // View > Simulate Overprints on, another view type off.
+                if let Some(on) = a.get("simulate_overprints").and_then(|v| v.as_bool()) {
+                    self.view.simulate_overprints = on;
+                    self.simulate_overprints = Some(on);
+                }
+                json!({})
+            }
             "vg_status" => {
                 self.status = a.get("text").and_then(|t| t.as_str()).map(str::to_string);
                 json!({})
@@ -1494,6 +1507,127 @@ impl HostInner {
 
 /// The JavaScript object model.
 pub(super) const PRELUDE: &str = include_str!("vg_model.js");
+
+/// The object model with the parameter names of its methods set as
+/// `__params`, read from its source: the script engine does not keep the
+/// source of class methods, and macros pass arguments by name
+/// (`CreateArtisticText(..., Font:="Arial", Size:=10)`).
+pub(super) fn prelude() -> &'static str {
+    static FULL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    FULL.get_or_init(|| format!("{PRELUDE}\n{}", param_names_js(PRELUDE)))
+}
+
+/// `Owner.prototype.Method.__params = [...]` (or `Owner.Method` for
+/// static methods and object literals) for every method of `src` written
+/// as `class Owner {` / `const Owner = {` with members indented two
+/// spaces, or as `Owner.prototype.Method = function (...)`. Parameter
+/// names are lower case, as named arguments are matched.
+fn param_names_js(src: &str) -> String {
+    fn names(list: &str) -> Vec<String> {
+        list.split(',')
+            .map(|p| p.split('=').next().unwrap_or("").trim())
+            .filter(|p| !p.is_empty() && !p.starts_with("..."))
+            .map(|p| p.to_ascii_lowercase())
+            .collect()
+    }
+    fn ident(s: &str) -> Option<&str> {
+        let end = s
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+            .unwrap_or(s.len());
+        let id = &s[..end];
+        (!id.is_empty() && !id.starts_with(|c: char| c.is_ascii_digit())).then_some(id)
+    }
+    let mut out = String::new();
+    let mut emit = |target: String, params: Vec<String>| {
+        if params.is_empty() {
+            return;
+        }
+        let list = params
+            .iter()
+            .map(|p| format!("{p:?}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        out.push_str(&format!(
+            "try {{ if (typeof {target} === 'function' && !{target}.__params) {target}.__params = [{list}]; }} catch (e) {{}}\n"
+        ));
+    };
+    // (owner, members belong to its prototype)
+    let mut owner: Option<(String, bool)> = None;
+    for line in src.lines() {
+        if let Some(rest) = line.strip_prefix("class ") {
+            owner = ident(rest).map(|n| (n.to_string(), true));
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("const ") {
+            if let Some(n) = ident(rest) {
+                if rest[n.len()..].trim_start().starts_with("= {") {
+                    owner = Some((n.to_string(), false));
+                    continue;
+                }
+            }
+        }
+        if line.starts_with('}') {
+            owner = None;
+        }
+        // Owner.prototype.Method = function (a, b) {
+        if let Some(i) = line.find(".prototype.") {
+            let head = &line[..i];
+            if let Some(cls) = ident(head.trim_start()) {
+                let rest = &line[i + ".prototype.".len()..];
+                if let Some(m) = ident(rest) {
+                    let tail = rest[m.len()..].trim_start();
+                    if let Some(f) = tail.strip_prefix("= function") {
+                        if let (Some(a), Some(b)) = (f.find('('), f.find(')')) {
+                            if a < b && head.trim_start() == cls {
+                                emit(format!("{cls}.prototype.{m}"), names(&f[a + 1..b]));
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        let Some((cls, proto)) = &owner else {
+            continue;
+        };
+        let Some(member) = line.strip_prefix("  ") else {
+            continue;
+        };
+        if member.starts_with(' ') {
+            continue;
+        }
+        let (member, is_static) = match member.strip_prefix("static ") {
+            Some(m) => (m, true),
+            None => (member, false),
+        };
+        if member.starts_with("get ") || member.starts_with("set ") {
+            continue;
+        }
+        let Some(m) = ident(member) else {
+            continue;
+        };
+        if m == "constructor" {
+            continue;
+        }
+        let tail = &member[m.len()..];
+        let Some(args) = tail.strip_prefix('(') else {
+            continue;
+        };
+        let Some(close) = args.find(')') else {
+            continue;
+        };
+        if !args[close + 1..].trim_start().starts_with('{') {
+            continue;
+        }
+        let target = if *proto && !is_static {
+            format!("{cls}.prototype.{m}")
+        } else {
+            format!("{cls}.{m}")
+        };
+        emit(target, names(&args[..close]));
+    }
+    out
+}
 
 #[cfg(test)]
 #[path = "vg_tests.rs"]
