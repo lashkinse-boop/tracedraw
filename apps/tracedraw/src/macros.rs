@@ -1413,6 +1413,15 @@ mod tests {
         for name in ["Spot_1_W", "Spot_2_L", "Spot_3_K"] {
             assert!(app.doc().inks.iter().any(|i| i.name == name), "{name}");
         }
+        let pdf = tracedraw_io::pdf::document_to_pdf_with(app.doc(), &Default::default());
+        let text = String::from_utf8_lossy(&pdf);
+        for name in ["Spot_1_W", "Spot_2_L", "Spot_3_K"] {
+            assert!(
+                text.contains(&format!("/Separation /{name} ")),
+                "{name} is not a separation in the PDF"
+            );
+        }
+        assert!(text.contains("/op true"), "no overprint in the PDF");
     }
 
     #[test]
