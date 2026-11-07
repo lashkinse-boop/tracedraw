@@ -1648,12 +1648,34 @@ mod tests {
         let gms = std::fs::read(dir.join("UVDTF.gms")).unwrap();
         let mut project = vp::read_gms(&gms).unwrap();
         // TD_UV_FIX: the inks named as the standard since 26.10.2026.
+        // TD_UV_FIX=plain: the inks are Spot_1 (white), Spot_2 (foil),
+        // Spot_3 (glue) and Spot_4 (varnish).
+        let plain = std::env::var("TD_UV_FIX").as_deref() == Ok("plain");
         if std::env::var("TD_UV_FIX").is_ok() {
             for m in &mut project.modules {
-                m.source = m
-                    .source
-                    .replace("\"Spot_2_F\"", "\"Spot_4_F\"")
-                    .replace("\"Spot_4_L\"", "\"Spot_2_L\"");
+                let mut lines = Vec::new();
+                for line in m.source.lines() {
+                    let t = line.trim_start();
+                    let l = if plain && t.starts_with("'") && t.contains("Spot_1_W") {
+                        "'  Spot_1 - white, Spot_2 - foil, Spot_3 - glue, Spot_4 - varnish"
+                            .to_string()
+                    } else if plain {
+                        line.replace("\"Spot_1_W\"", "\"Spot_1\"")
+                            .replace("\"Spot_2_F\"", "\"Spot_2\"")
+                            .replace("\"Spot_3_K\"", "\"Spot_3\"")
+                            .replace("\"Spot_4_L\"", "\"Spot_4\"")
+                    } else {
+                        line.replace("\"Spot_2_F\"", "\"Spot_4_F\"")
+                            .replace("\"Spot_4_L\"", "\"Spot_2_L\"")
+                    };
+                    lines.push(l);
+                }
+                m.source = lines.join("\r\n") + "\r\n";
+                for (i, line) in m.source.lines().enumerate() {
+                    if line.contains("Spot_") || line.contains("SPOT_") {
+                        println!("  spot line {:4}: {}", i + 1, line.trim());
+                    }
+                }
             }
             std::fs::write(out.join("UVDTF.gms"), vp::write_gms(&project).unwrap()).unwrap();
         }
@@ -1690,12 +1712,21 @@ mod tests {
         app.palettes.push(crate::palette::Palette {
             name: "Spot".into(),
             key: "",
-            colors: vec![
-                ("Spot_1_W".into(), ink("Spot_1_W", [0.0, 0.0, 0.0, 10.0])),
-                ("Spot_2_L".into(), ink("Spot_2_L", [0.0, 0.0, 100.0, 0.0])),
-                ("Spot_3_K".into(), ink("Spot_3_K", [100.0, 0.0, 0.0, 0.0])),
-                ("Spot_4_F".into(), ink("Spot_4_F", [0.0, 30.0, 100.0, 0.0])),
-            ],
+            colors: if plain {
+                vec![
+                    ("Spot_1".into(), ink("Spot_1", [0.0, 0.0, 0.0, 10.0])),
+                    ("Spot_2".into(), ink("Spot_2", [0.0, 30.0, 100.0, 0.0])),
+                    ("Spot_3".into(), ink("Spot_3", [100.0, 0.0, 0.0, 0.0])),
+                    ("Spot_4".into(), ink("Spot_4", [0.0, 0.0, 100.0, 0.0])),
+                ]
+            } else {
+                vec![
+                    ("Spot_1_W".into(), ink("Spot_1_W", [0.0, 0.0, 0.0, 10.0])),
+                    ("Spot_2_L".into(), ink("Spot_2_L", [0.0, 0.0, 100.0, 0.0])),
+                    ("Spot_3_K".into(), ink("Spot_3_K", [100.0, 0.0, 0.0, 0.0])),
+                    ("Spot_4_F".into(), ink("Spot_4_F", [0.0, 30.0, 100.0, 0.0])),
+                ]
+            },
             builtin: false,
             path: None,
         });
@@ -1756,8 +1787,13 @@ mod tests {
         };
         println!("before:");
         summary(&app);
-        for name in ["UVDTF_Sticker", "UVDTF_Layout", "UVDTF_SavePDF"] {
-            if name == "UVDTF_Sticker" {
+        let first = if std::env::var("TD_UV_FOIL").is_ok() {
+            "UVDTF_StickerFoil"
+        } else {
+            "UVDTF_Sticker"
+        };
+        for name in [first, "UVDTF_Layout", "UVDTF_SavePDF"] {
+            if name == first {
                 app.select_all();
             } else {
                 // The sticker the first step made.
