@@ -1,0 +1,41 @@
+name: win-build
+
+# Builds the Windows binaries of this branch and stores them, zipped, on
+# the `win-binaries` branch of this repository.
+on:
+  push:
+    branches: [build-windows]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --target x86_64-pc-windows-msvc -p tracedraw -p tracedraw-cli
+      - name: Zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          $r = "target\x86_64-pc-windows-msvc\release"
+          Compress-Archive -Path "$r\tracedraw.exe","$r\tracedraw-cli.exe","LICENSE-MIT","LICENSE-APACHE" -DestinationPath out\tracedraw-windows-x86_64.zip
+      - name: Store on win-binaries
+        shell: bash
+        run: |
+          sha=$(git rev-parse --short HEAD)
+          mkdir /tmp/bin && cp out/tracedraw-windows-x86_64.zip /tmp/bin/
+          echo "$sha $(date -u +%FT%TZ)" > /tmp/bin/BUILD.txt
+          cd /tmp/bin
+          git init -q -b win-binaries
+          git config user.name "build bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add . && git commit -q -m "Windows build of $sha"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" win-binaries
