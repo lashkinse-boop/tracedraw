@@ -793,3 +793,53 @@ fn outlines_become_objects_and_shapes_copy_to_another_layer() {
     );
     assert_eq!(out, vec!["true true".to_string(), "2 2".to_string()]);
 }
+
+#[test]
+fn queries_test_names_with_starts_ends_and_contains() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "for (const n of ['UNDERLAY_Spot_1_W', 'UNDERLAY_Spot_2_L', 'Logo']) {
+           const r = ActiveLayer.CreateRectangle2(10, 10, 10, 10); r.Name = n;
+         }
+         const g = ActiveLayer.Shapes.All().Group();
+         print(ActivePage.Shapes.FindShapes(undefined, undefined, true, \"@name.StartsWith('UNDERLAY_')\").Count,
+               ActivePage.Shapes.FindShapes(undefined, undefined, true, \"@name.EndsWith('_L')\").Count,
+               ActivePage.Shapes.FindShapes(undefined, undefined, true, \"@name.Contains('go')\").Count);",
+    );
+    assert_eq!(out, vec!["2 1 1".to_string()]);
+}
+
+#[test]
+fn pdf_settings_publish_the_current_page_alone() {
+    let mut app = App::headless();
+    let dir = std::env::temp_dir().join(format!("td_pdfset_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let all = dir.join("all.pdf");
+    let one = dir.join("one.pdf");
+    let src = format!(
+        "ActiveLayer.CreateRectangle2(10, 10, 10, 10);
+         ActiveDocument.AddPages(1);
+         const ps = ActiveDocument.PDFSettings;
+         print(ps.Load('UVDTF'), ps.PublishRange === pdfWholeDocument);
+         ActiveDocument.PublishToPDF({all:?});
+         ps.PublishRange = pdfCurrentPage;
+         ActiveDocument.PublishToPDF({one:?});",
+        all = all.display().to_string(),
+        one = one.display().to_string()
+    );
+    let out = run(&mut app, &src);
+    assert_eq!(out, vec!["true true".to_string()]);
+    let pages = |p: &std::path::Path| {
+        let t = String::from_utf8_lossy(&std::fs::read(p).unwrap()).to_string();
+        t.split("/Type /Pages")
+            .nth(1)
+            .and_then(|r| r.split("/Count ").nth(1))
+            .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_eq!(pages(&all), "2");
+    assert_eq!(pages(&one), "1");
+    let _ = std::fs::remove_dir_all(&dir);
+}

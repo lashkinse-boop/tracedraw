@@ -813,19 +813,35 @@ function __matches(id, Name, Type, query) {
 const __typeNames = { rectangle: cdrRectangleShape, ellipse: cdrEllipseShape, curve: cdrCurveShape,
   polygon: cdrPolygonShape, bitmap: cdrBitmapShape, text: cdrTextShape, group: cdrGroupShape,
   symbol: cdrSymbolShape };
-// Queries: comparisons of @name, @type and @fill.type joined by "and" /
-// "or", e.g. "@name = 'Logo' and @type = 'rectangle'".
+// Queries: comparisons of @name, @type and @fill.type, and the string
+// tests StartsWith, EndsWith and Contains on them, joined by "and" /
+// "or", e.g. "@name = 'Logo' and @type = 'rectangle'" or
+// "@name.StartsWith('UNDERLAY_')".
+function __queryValue(info, prop) {
+  switch (prop.toLowerCase()) {
+    case 'name': return info.name || '';
+    case 'type': return Object.keys(__typeNames).find(k => __typeNames[k] === __typeOf(info)) || '';
+    case 'fill.type': return { none: 'none', solid: 'uniform', fountain: 'fountain', pattern: 'pattern', texture: 'texture', mesh: 'mesh' }[info.fill.fill];
+    default: return undefined;
+  }
+}
 function __query(info, q) {
   return String(q).split(/\s+or\s+/i).some(part => part.split(/\s+and\s+/i).every(t => {
-    const m = /^\s*@([\w.]+)\s*(=|<>|!=)\s*'([^']*)'\s*$/.exec(t);
-    if (!m) return false;
-    let v;
-    switch (m[1].toLowerCase()) {
-      case 'name': v = info.name; break;
-      case 'type': v = Object.keys(__typeNames).find(k => __typeNames[k] === __typeOf(info)) || ''; break;
-      case 'fill.type': v = { none: 'none', solid: 'uniform', fountain: 'fountain', pattern: 'pattern', texture: 'texture', mesh: 'mesh' }[info.fill.fill]; break;
-      default: return false;
+    let m = /^\s*@([\w.]+?)\.(StartsWith|EndsWith|Contains)\(\s*'([^']*)'\s*\)\s*$/i.exec(t);
+    if (m) {
+      const v = __queryValue(info, m[1]);
+      if (v === undefined) return false;
+      const s = String(v);
+      switch (m[2].toLowerCase()) {
+        case 'startswith': return s.startsWith(m[3]);
+        case 'endswith': return s.endsWith(m[3]);
+        default: return s.includes(m[3]);
+      }
     }
+    m = /^\s*@([\w.]+)\s*(=|<>|!=)\s*'([^']*)'\s*$/.exec(t);
+    if (!m) return false;
+    const v = __queryValue(info, m[1]);
+    if (v === undefined) return false;
     const eq = String(v).toLowerCase() === m[3].toLowerCase();
     return m[2] === '=' ? eq : !eq;
   }));
@@ -1229,7 +1245,10 @@ class Document {
     return new ExportFilter({ path: String(FileName), format: __filterExt[Filter] || '', page: this._d.page,
       w: Width || 0, h: Height || 0, dpi: ResolutionX || 0 });
   }
-  PublishToPDF(FileName) { __call('vg_export', { path: String(FileName), format: 'pdf' }); }
+  PublishToPDF(FileName) {
+    const r = (__vg.pdf && __vg.pdf.range) || pdfWholeDocument;
+    __call('vg_export', { path: String(FileName), format: 'pdf', current_page: r === pdfCurrentPage });
+  }
 }
 
 // ----- Application and globals --------------------------------------------
@@ -1758,3 +1777,23 @@ for (const cls of [Shape, ShapeRange, SelectionShape]) {
     return new ShapeRange(__call('vg_copy_to_layer', { ids: this._ids(), layer: Layer.id }).ids);
   };
 }
+
+// ----- PDF settings ---------------------------------------------------------
+// Document.PDFSettings: the range PublishToPDF writes (the whole drawing or
+// the current page). TraceDraw's PDF always keeps spot inks and overprint,
+// so a named settings style loads and saves without changing anything.
+const pdfWholeDocument = 0, pdfCurrentPage = 1, pdfDocuments = 2, pdfPageRange = 3, pdfSelection = 4;
+Object.assign(globalThis, { pdfWholeDocument, pdfCurrentPage, pdfDocuments, pdfPageRange, pdfSelection });
+class __PdfSettings {
+  get _s() { if (!__vg.pdf) __vg.pdf = { range: pdfWholeDocument }; return __vg.pdf; }
+  get PublishRange() { return this._s.range; }
+  set PublishRange(v) {
+    if (v !== pdfWholeDocument && v !== pdfCurrentPage) __no('PDFSettings.PublishRange', 'the whole drawing or the current page');
+    this._s.range = v;
+  }
+  Load(Name) { return true; }
+  Save(Name) { }
+  ShowDialog() { return true; }
+  Reset() { this._s.range = pdfWholeDocument; }
+}
+__def(Document, 'PDFSettings', function () { return new __PdfSettings(); });

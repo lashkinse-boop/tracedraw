@@ -252,6 +252,23 @@ Creatable with `New`.
 - **`CopyToLayer(Layer)`** on a shape, range or selection: copies on that
   layer, in the same place on the page.
 
+### View, PDF settings, files
+
+- **`ActiveWindow.ActiveView.Type`:** `cdrEnhancedViewWithOverprints` (5)
+  turns View > Simulate Overprints on, another view type off.
+- **`Document.PDFSettings`:** `PublishRange` (`pdfWholeDocument` 0,
+  `pdfCurrentPage` 1) chooses what `PublishToPDF` writes; `Load`, `Save`
+  and `ShowDialog` of a named style succeed without changing anything, as
+  the PDF always keeps spot inks and overprint.
+- **`Dir(PathName)`:** a file's name when it exists, else ""; a `*` or `?`
+  in the name gives the first match in its folder. `Dir` with no path is
+  not available.
+- **Queries** (`FindShapes(Query:=...)`): `@name`, `@type` and
+  `@fill.type` compared with `=`, `<>`, or tested with
+  `.StartsWith('...')`, `.EndsWith('...')`, `.Contains('...')`.
+- Methods of the object model take **named arguments**
+  (`CreateArtisticText(..., Font:="Arial", Size:=10)`).
+
 ### Constants
 
 The enumerations macros use are globals with their numeric values.

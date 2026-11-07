@@ -930,6 +930,12 @@ impl HostInner {
                     };
                 let data = match ext.as_str() {
                     "svg" => tracedraw_io::svg::page_to_svg(&self.doc, idx).into_bytes(),
+                    "pdf" if a.get("current_page").and_then(|v| v.as_bool()) == Some(true) => {
+                        // PDFSettings.PublishRange = pdfCurrentPage.
+                        let mut one = self.doc.clone();
+                        one.pages.retain(|pg| pg.id == page);
+                        tracedraw_io::pdf::document_to_pdf(&one)
+                    }
                     "pdf" => tracedraw_io::pdf::document_to_pdf(&self.doc),
                     "eps" | "ps" => tracedraw_io::eps::document_to_ps(&self.doc).into_bytes(),
                     "cdr" => tracedraw_cdr::write::document_to_cdr(&self.doc),

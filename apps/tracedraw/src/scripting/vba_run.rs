@@ -444,6 +444,59 @@ fn native_folder(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsRes
     Ok(text(f))
 }
 
+/// `__dir(path)`: `Dir(PathName)` of one file: its name when it exists,
+/// else "". A `*` or `?` in the name matches files of its folder; the
+/// first match in name order is given. A browser has no files: "".
+fn native_dir(_this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let path = args
+        .first()
+        .map(|v| v.to_string(ctx).map(|s| s.to_std_string_escaped()))
+        .transpose()?
+        .unwrap_or_default();
+    Ok(text(dir_match(&path)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dir_match(path: &str) -> String {
+    fn matches(p: &[char], n: &[char]) -> bool {
+        match (p.first(), n.first()) {
+            (None, None) => true,
+            (Some('*'), _) => matches(&p[1..], n) || (!n.is_empty() && matches(p, &n[1..])),
+            (Some('?'), Some(_)) => matches(&p[1..], &n[1..]),
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b) && matches(&p[1..], &n[1..]),
+            _ => false,
+        }
+    }
+    let p = std::path::Path::new(path);
+    let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) else {
+        return String::new();
+    };
+    if !name.contains(['*', '?']) {
+        return if p.is_file() { name } else { String::new() };
+    }
+    let folder = p
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    let pattern: Vec<char> = name.chars().collect();
+    let mut found: Vec<String> = std::fs::read_dir(folder)
+        .map(|it| {
+            it.flatten()
+                .filter(|e| e.path().is_file())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|n| matches(&pattern, &n.chars().collect::<Vec<_>>()))
+                .collect()
+        })
+        .unwrap_or_default();
+    found.sort();
+    found.into_iter().next().unwrap_or_default()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn dir_match(_path: &str) -> String {
+    String::new()
+}
+
 /// `__stop()`: whether the user stopped the macro.
 fn native_stop(_this: &JsValue, _args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
     let Some(st) = ctx.get_data::<RunState>() else {
@@ -675,8 +728,9 @@ fn run_thread(
             &str,
             usize,
             boa_engine::native_function::NativeFunctionPointer,
-        ); 14] = [
+        ); 15] = [
             ("__setting", 5, native_setting),
+            ("__dir", 1, native_dir),
             ("__folder", 0, native_folder),
             ("__td", 2, dispatch),
             ("__mb", 3, native_msgbox),

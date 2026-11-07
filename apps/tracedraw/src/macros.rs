@@ -1484,6 +1484,31 @@ mod tests {
     }
 
     #[test]
+    fn dir_tells_whether_a_file_exists() {
+        let dir = std::env::temp_dir().join(format!("td_dir_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Raskladka_15_sht.pdf"), b"x").unwrap();
+        let here = dir.join("Raskladka_15_sht.pdf").display().to_string();
+        let gone = dir.join("nothing.pdf").display().to_string();
+        let star = dir.join("Rask*.pdf").display().to_string();
+        let code = format!(
+            "Sub Go()\r\nDebug.Print \"[\" & Dir(\"{here}\") & \"][\" & Dir(\"{gone}\") & \"][\" & Dir(\"{star}\") & \"]\"\r\nEnd Sub\r\n"
+        );
+        let mut app = app_with(project("Dir", &code, Vec::new()));
+        app.run_macro(0, "Main", "Go");
+        drive(&mut app, |_| {});
+        assert!(app.macros.error.is_none(), "{:?}", app.macros.error);
+        assert!(
+            app.scripts_output
+                .iter()
+                .any(|l| l == "[Raskladka_15_sht.pdf][][Raskladka_15_sht.pdf]"),
+            "{:?}",
+            app.scripts_output
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_form_button_draws_and_reads_its_text_box() {
         let mut form = vp::Form {
             name: "Box".into(),
@@ -1593,6 +1618,207 @@ mod tests {
             "{:?}",
             app.scripts_output
         );
+    }
+
+    /// Local check of the print underlay project on a real drawing (not
+    /// run by default): `TD_UV_DIR` holds `test.cdr` and `UVDTF.gms`; the
+    /// spot palette is set up, UVDTF_Sticker, UVDTF_Layout and
+    /// UVDTF_SavePDF run in turn on page 1, and the PDF and page pictures
+    /// go to `TD_UV_OUT`.
+    #[test]
+    #[ignore]
+    fn uv_underlay_project_on_a_real_drawing() {
+        let Ok(dir) = std::env::var("TD_UV_DIR") else {
+            return;
+        };
+        let out = std::path::PathBuf::from(
+            std::env::var("TD_UV_OUT").unwrap_or_else(|_| "/tmp/uv".into()),
+        );
+        std::fs::create_dir_all(&out).unwrap();
+        let dir = std::path::PathBuf::from(dir);
+        let work = out.join("test.cdr");
+        std::fs::copy(dir.join("test.cdr"), &work).unwrap();
+        let bytes = std::fs::read(&work).unwrap();
+        let (doc, report) = tracedraw_cdr::open_bytes(&bytes, "test").unwrap();
+        println!("cdr: {} pages, report {:?}", doc.pages.len(), report);
+        let mut app = App::headless();
+        app.open_document(doc, Some(work.clone()));
+        app.macros.dir = Some(temp("uv"));
+        app.macros.loaded = true;
+        let gms = std::fs::read(dir.join("UVDTF.gms")).unwrap();
+        let mut project = vp::read_gms(&gms).unwrap();
+        // TD_UV_FIX: the inks named as the standard since 26.10.2026.
+        if std::env::var("TD_UV_FIX").is_ok() {
+            for m in &mut project.modules {
+                m.source = m
+                    .source
+                    .replace("\"Spot_2_F\"", "\"Spot_4_F\"")
+                    .replace("\"Spot_4_L\"", "\"Spot_2_L\"");
+            }
+            std::fs::write(out.join("UVDTF.gms"), vp::write_gms(&project).unwrap()).unwrap();
+        }
+        if let Ok(range) = std::env::var("TD_UV_LINES") {
+            let (a, b) = range.split_once('-').unwrap_or(("1", "40"));
+            let (a, b): (usize, usize) = (a.parse().unwrap_or(1), b.parse().unwrap_or(40));
+            for m in &project.modules {
+                for (i, line) in m.source.lines().enumerate() {
+                    if (a..=b).contains(&(i + 1)) {
+                        println!("{:4} {}", i + 1, line);
+                    }
+                }
+            }
+        }
+        for m in &project.modules {
+            for line in m.source.lines() {
+                let t = line.trim_start();
+                if t.starts_with("Const SPOT")
+                    || t.starts_with("Const OFFSET")
+                    || t.starts_with("Attribute VB_Name")
+                {
+                    println!("  {}: {}", m.name, t);
+                }
+            }
+        }
+        let pi = app.macros.install(project, Some(&gms)).unwrap();
+        match app.macros.projects[pi].compile() {
+            Ok(_) => println!("compiles; {:?}", app.macros.projects[pi].macros()),
+            Err(e) => println!("COMPILE ERROR {e}"),
+        }
+        let ink = |n: &str, c: [f32; 4]| {
+            crate::palette::spot_color(n, tracedraw_core::Color::cmyk_pct(c[0], c[1], c[2], c[3]))
+        };
+        app.palettes.push(crate::palette::Palette {
+            name: "Spot".into(),
+            key: "",
+            colors: vec![
+                ("Spot_1_W".into(), ink("Spot_1_W", [0.0, 0.0, 0.0, 10.0])),
+                ("Spot_2_L".into(), ink("Spot_2_L", [0.0, 0.0, 100.0, 0.0])),
+                ("Spot_3_K".into(), ink("Spot_3_K", [100.0, 0.0, 0.0, 0.0])),
+                ("Spot_4_F".into(), ink("Spot_4_F", [0.0, 30.0, 100.0, 0.0])),
+            ],
+            builtin: false,
+            path: None,
+        });
+        let module = app.macros.projects[pi]
+            .macros()
+            .iter()
+            .find(|(_, n)| n == "UVDTF_Sticker")
+            .map(|(m, _)| m.clone())
+            .unwrap_or_else(|| "UVDTF".into());
+        let summary = |app: &App| {
+            for (pi, p) in app.doc().pages.iter().enumerate() {
+                for l in &p.layers {
+                    for s in &l.shapes {
+                        let kids = match &s.kind {
+                            tracedraw_core::document::ShapeKind::Group { children } => children
+                                .iter()
+                                .map(|c| {
+                                    format!(
+                                        "{}:{:?}:op={}",
+                                        c.name.clone().unwrap_or_default(),
+                                        match c.fill {
+                                            tracedraw_core::Fill::Solid(
+                                                tracedraw_core::Color::Spot { ink, .. },
+                                            ) => format!("spot{ink:x}"),
+                                            ref f => format!("{:?}", std::mem::discriminant(f)),
+                                        },
+                                        c.overprint_fill
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            _ => String::new(),
+                        };
+                        let b = s.bounds();
+                        println!(
+                            "  page {} '{}' {:.2}x{:.2} at ({:.2},{:.2}) op={} [{}]",
+                            pi + 1,
+                            s.name.clone().unwrap_or_default(),
+                            b.width(),
+                            b.height(),
+                            b.x0,
+                            b.y0,
+                            s.overprint_fill,
+                            kids
+                        );
+                    }
+                }
+            }
+            println!(
+                "  inks: {:?}",
+                app.doc()
+                    .inks
+                    .iter()
+                    .map(|i| i.name.clone())
+                    .collect::<Vec<_>>()
+            );
+            println!("  simulate overprints: {}", app.simulate_overprints);
+        };
+        println!("before:");
+        summary(&app);
+        for name in ["UVDTF_Sticker", "UVDTF_Layout", "UVDTF_SavePDF"] {
+            if name == "UVDTF_Sticker" {
+                app.select_all();
+            } else {
+                // The sticker the first step made.
+                app.select_all_of(|s| s.name.as_deref() == Some("UVDTF"));
+                if app.selection.is_empty() {
+                    app.select_all();
+                }
+            }
+            app.run_macro(pi, &module, name);
+            let mut shown = Vec::new();
+            drive(&mut app, |app| match app.macros.prompt.take() {
+                Some(Prompt::MsgBox {
+                    prompt, buttons, ..
+                }) => {
+                    shown.push(format!("MsgBox({buttons}) {}", prompt.replace('\n', " | ")));
+                    let yes = match buttons & 0xF {
+                        1 => 1,
+                        3 | 4 => 6,
+                        _ => 1,
+                    };
+                    app.answer_macro(Input::Answer(yes));
+                }
+                Some(Prompt::InputBox { prompt, text, .. }) => {
+                    shown.push(format!("InputBox {prompt} [{text}]"));
+                    app.answer_macro(Input::Text(Some(if text.is_empty() {
+                        "15".into()
+                    } else {
+                        text
+                    })));
+                }
+                None => {}
+            });
+            println!("== {name}: error {:?}", app.macros.error.take());
+            for l in shown {
+                println!("   {l}");
+            }
+            summary(&app);
+        }
+        // The PDF of every page, as File > Export makes it.
+        let pdf = tracedraw_io::pdf::document_to_pdf(app.doc());
+        std::fs::write(out.join("export.pdf"), &pdf).unwrap();
+        let text = String::from_utf8_lossy(&pdf);
+        for n in ["Spot_1_W", "Spot_2_L", "Spot_3_K", "Spot_4_F"] {
+            println!(
+                "PDF separation {n}: {}",
+                text.contains(&format!("/Separation /{n} "))
+            );
+        }
+        println!("PDF overprint states: {}", text.matches("/op true").count());
+        for (k, p) in app.doc().pages.iter().enumerate() {
+            if let Some(px) = tracedraw_render::render_page_image(app.doc(), p.id, 150.0) {
+                let _ = px.save_png(out.join(format!("page{}.png", k + 1)));
+            }
+        }
+        for e in std::fs::read_dir(&out).unwrap().flatten() {
+            println!(
+                "out: {} {}",
+                e.path().display(),
+                e.metadata().map(|m| m.len()).unwrap_or(0)
+            );
+        }
     }
 
     /// Local check of projects on disk (not run by default): every
