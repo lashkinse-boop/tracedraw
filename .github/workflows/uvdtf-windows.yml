@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
-      - run: cargo test --locked -p tracedraw --lib macros::tests::
+      - run: 'cargo test --locked -p tracedraw --lib macros::tests::'
       - run: cargo build --locked --release -p tracedraw -p tracedraw-cli
       - uses: actions/upload-artifact@v4
         with:
