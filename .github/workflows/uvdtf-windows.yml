@@ -1,0 +1,21 @@
+name: UV DTF Windows
+on:
+  push:
+    branches: [uvdtf-panel-0460]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - run: cargo test --locked -p tracedraw --lib macros::tests::
+      - run: cargo build --locked --release -p tracedraw -p tracedraw-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tracedraw-0.46.0-uvdtf-panel-windows-x64
+          path: |
+            target/release/tracedraw.exe
+            target/release/tracedraw-cli.exe
+          if-no-files-found: error

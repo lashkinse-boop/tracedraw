@@ -286,6 +286,8 @@ pub struct MacroState {
     pub applied: Option<u64>,
     /// Run Macro (Alt+Shift+F8).
     pub run_dialog: Option<RunDialog>,
+    /// Whether the UV DTF button panel is open.
+    pub uvdtf_panel: bool,
     /// The macro editor (Alt+F11).
     pub editor: Option<Editor>,
     /// The Macro Manager's chosen row: (project, module, macro).
@@ -480,6 +482,25 @@ pub fn all_macros(state: &MacroState) -> Vec<(usize, String, String)> {
     out
 }
 
+/// Resolve a shortcut only when one loaded UVDTF project offers it.
+fn uvdtf_macro(state: &MacroState, name: &str) -> Option<(usize, String, String)> {
+    let mut found = None;
+    for (index, project) in state.projects.iter().enumerate() {
+        if !project.name().eq_ignore_ascii_case("UVDTF") {
+            continue;
+        }
+        for (module, procedure) in project.macros() {
+            if procedure.eq_ignore_ascii_case(name) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some((index, module, procedure));
+            }
+        }
+    }
+    found
+}
+
 /// Dots would end the key's last part early (see `i18n::tr`).
 fn key_part(s: &str) -> String {
     s.replace('.', " ")
@@ -571,6 +592,14 @@ impl App {
         }
         self.macros.ensure_loaded();
         self.open_docker(crate::app::DockerTab::Macros);
+    }
+
+    pub fn request_uvdtf_macro(&mut self, name: &str) {
+        if let Some((index, module, procedure)) = uvdtf_macro(&self.macros, name) {
+            self.request_macro(index, &module, &procedure);
+        } else {
+            self.status = tr("macros.uvdtf_missing");
+        }
     }
 
     /// Run `module.name` of project `project`, after showing its warnings
@@ -1058,6 +1087,28 @@ fn save_each_macro_file(
 mod tests {
     use super::*;
     use crate::scripting::vba_run::Input;
+
+    #[test]
+    fn uvdtf_panel_resolves_only_unambiguous_project_macros() {
+        let code = "Public Sub UVDTF_Sticker()\r\nEnd Sub\r\n";
+        let mut state = MacroState::default();
+        state.projects.push(MacroProject::new(
+            PathBuf::from("Other.gms"),
+            project("Other", code, Vec::new()),
+        ));
+        assert!(uvdtf_macro(&state, "UVDTF_Sticker").is_none());
+        state.projects.push(MacroProject::new(
+            PathBuf::from("UVDTF_Spot1-4.gms"),
+            project("UVDTF", code, Vec::new()),
+        ));
+        assert_eq!(
+            uvdtf_macro(&state, "uvdtf_sticker"),
+            Some((1, "Main".into(), "UVDTF_Sticker".into()))
+        );
+        let duplicate = state.projects[1].clone();
+        state.projects.push(duplicate);
+        assert!(uvdtf_macro(&state, "UVDTF_Sticker").is_none());
+    }
 
     fn project(name: &str, code: &str, forms: Vec<vp::Form>) -> vp::Project {
         let mut modules = vec![vp::Module {

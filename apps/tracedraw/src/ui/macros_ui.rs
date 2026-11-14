@@ -70,6 +70,9 @@ pub fn frame(app: &mut App, ctx: &Context) {
     if app.macro_tick() {
         ctx.request_repaint_after(std::time::Duration::from_millis(30));
     }
+    if app.macros.uvdtf_panel {
+        uvdtf_panel(app, ctx);
+    }
     if app.macros.modal() {
         crate::ui::chrome::modal_blocker(ctx);
     }
@@ -80,6 +83,36 @@ pub fn frame(app: &mut App, ctx: &Context) {
     error_dialog(app, ctx);
     running_notice(app, ctx);
     editor(app, ctx);
+}
+
+fn uvdtf_panel(app: &mut App, ctx: &Context) {
+    let enabled = app.has_document() && app.macros.run.is_none() && !app.macros.modal();
+    let mut open = app.macros.uvdtf_panel;
+    let mut selected = None;
+    egui::Window::new(tr("macros.uvdtf_panel"))
+        .id(egui::Id::new("uvdtf_panel"))
+        .open(&mut open)
+        .resizable(false)
+        .show(ctx, |ui| {
+            for (label, name) in [
+                ("macros.uvdtf_sticker", "UVDTF_Sticker"),
+                ("macros.uvdtf_foil", "UVDTF_StickerFoil"),
+                ("macros.uvdtf_layout", "UVDTF_Layout"),
+                ("macros.uvdtf_pdf", "UVDTF_SavePDF"),
+            ] {
+                let button = ui.add_enabled(
+                    enabled,
+                    egui::Button::new(tr(label)).min_size(Vec2::new(160.0, 26.0)),
+                );
+                if button.clicked() {
+                    selected = Some(name);
+                }
+            }
+        });
+    app.macros.uvdtf_panel = open;
+    if let Some(name) = selected {
+        app.request_uvdtf_macro(name);
+    }
 }
 
 // ---------------------------------------------------------------- icons

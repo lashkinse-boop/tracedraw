@@ -4384,6 +4384,9 @@ fn macros_items(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.tools.macro_manager", "", true) {
         app.show_macro_manager();
     }
+    if item(ui, "macros.uvdtf_panel", "", !crate::files::WEB) {
+        app.macros.uvdtf_panel = true;
+    }
     if item(ui, "menu.tools.macros_run", "Alt+Shift+F8", true) {
         app.open_run_macro();
     }
